@@ -1,21 +1,20 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:flutter_tts/flutter_tts.dart';
+import 'jarvis_brain.dart';
 
 void main() {
-  runApp(const JarvisApp());
+  runApp(const JarvisV2());
 }
 
-class JarvisApp extends StatelessWidget {
-  const JarvisApp({super.key});
+class JarvisV2 extends StatelessWidget {
+  const JarvisV2({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'JARVIS',
+      title: 'Jarvis v2',
       theme: ThemeData.dark(),
       home: const JarvisHome(),
     );
@@ -30,409 +29,130 @@ class JarvisHome extends StatefulWidget {
 }
 
 class _JarvisHomeState extends State<JarvisHome> {
-  final TextEditingController messageController = TextEditingController();
-  final TextEditingController apiController = TextEditingController();
-
   final stt.SpeechToText speech = stt.SpeechToText();
   final FlutterTts tts = FlutterTts();
-
-  String status = "SYSTEM READY";
-  String userMessage = "";
-  String jarvisReply = "Good day. I am JARVIS.";
+  final JarvisBrain brain = JarvisBrain();
 
   bool listening = false;
+  String status = 'JARVIS V2 READY';
+  String userMessage = '';
+  String response = '';
 
   @override
   void initState() {
     super.initState();
+    _setupVoice();
+  }
 
-    tts.setSpeechRate(0.45);
-    tts.setPitch(0.85);
+  Future<void> _setupVoice() async {
+    await tts.setSpeechRate(0.45);
+    await tts.setPitch(0.85);
   }
 
   Future<void> startListening() async {
     if (listening) {
       await speech.stop();
-
       setState(() {
         listening = false;
-        status = "SYSTEM READY";
+        status = 'JARVIS V2 READY';
       });
-
       return;
     }
 
-    bool available = await speech.initialize();
+    final available = await speech.initialize();
 
     if (!available) {
       setState(() {
-        status = "MIC NOT AVAILABLE";
+        status = 'MICROPHONE NOT AVAILABLE';
       });
       return;
     }
 
     setState(() {
       listening = true;
-      status = "LISTENING...";
+      status = 'LISTENING...';
     });
 
     await speech.listen(
       onResult: (result) {
         setState(() {
-          messageController.text = result.recognizedWords;
+          userMessage = result.recognizedWords;
         });
 
-        if (result.finalResult) {
-          setState(() {
-            listening = false;
-          });
-
-          askJarvis(result.recognizedWords);
+        if (result.finalResult && result.recognizedWords.trim().isNotEmpty) {
+          _processCommand(result.recognizedWords);
         }
       },
     );
   }
 
-  Future<void> askJarvis(String question) async {
-    if (question.trim().isEmpty) return;
-
-    String apiKey = apiController.text.trim();
-
-    if (apiKey.isEmpty) {
-      setState(() {
-        jarvisReply = "Please enter your Gemini API key first.";
-        status = "API KEY REQUIRED";
-      });
-
-      speak(jarvisReply);
-      return;
-    }
+  Future<void> _processCommand(String command) async {
+    await speech.stop();
 
     setState(() {
-      status = "THINKING...";
-      userMessage = question;
+      listening = false;
+      status = 'THINKING...';
     });
 
-    try {
-      final response = await http.post(
-        Uri.parse(
-          "https://generativelanguage.googleapis.com/v1beta/models/"
-          "gemini-2.0-flash:generateContent",
-        ),
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": apiKey,
-        },
-        body: jsonEncode({
-          "system_instruction": {
-            "parts": [
-              {
-                "text":
-                    "You are JARVIS, a futuristic personal AI assistant. "
-                    "Answer accurately and naturally. "
-                    "The user may speak Bengali, Hindi or English. "
-                    "Reply in the same language when appropriate. "
-                    "Be helpful, concise and friendly. "
-                    "Never claim you physically performed an action "
-                    "unless the application actually confirms it."
-              }
-            ]
-          },
-          "contents": [
-            {
-              "role": "user",
-              "parts": [
-                {"text": question}
-              ]
-            }
-          ]
-        }),
-      );
+    final answer = brain.reply(command);
 
-      if (response.statusCode < 200 ||
-          response.statusCode >= 300) {
-        throw Exception("API Error ${response.statusCode}");
-      }
+    setState(() {
+      response = answer;
+      status = 'JARVIS V2 READY';
+    });
 
-      final data = jsonDecode(response.body);
-
-      final candidates = data["candidates"];
-
-      if (candidates == null || candidates.isEmpty) {
-        throw Exception("No AI response");
-      }
-
-      final reply =
-          candidates[0]["content"]["parts"][0]["text"].toString();
-
-      setState(() {
-        jarvisReply = reply;
-        status = "SYSTEM READY";
-      });
-
-      await speak(reply);
-    } catch (e) {
-      setState(() {
-        jarvisReply =
-            "I could not connect to the AI service. "
-            "Please check your internet connection and API key.";
-
-        status = "CONNECTION ERROR";
-      });
-
-      await speak(jarvisReply);
-    }
+    await tts.speak(answer);
   }
 
-  Future<void> speak(String text) async {
-    await tts.speak(text);
+  @override
+  void dispose() {
+    speech.stop();
+    tts.stop();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF03070C),
-
       appBar: AppBar(
-        backgroundColor: const Color(0xFF03070C),
+        title: const Text('JARVIS v2'),
         centerTitle: true,
-        title: const Text(
-          "J.A.R.V.I.S.",
-          style: TextStyle(
-            color: Colors.cyanAccent,
-            fontSize: 24,
-            letterSpacing: 5,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
       ),
-
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.all(20),
-
+      body: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-
-            const SizedBox(height: 15),
-
-            // JARVIS CORE
-
-            Center(
-              child: Container(
-                width: 170,
-                height: 170,
-
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-
-                  border: Border.all(
-                    color: Colors.cyanAccent,
-                    width: 3,
-                  ),
-
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Colors.cyanAccent,
-                      blurRadius: 35,
-                      spreadRadius: 8,
-                    ),
-                  ],
-                ),
-
-                child: const Center(
-                  child: Icon(
-                    Icons.hub,
-                    size: 95,
-                    color: Colors.cyanAccent,
-                  ),
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 20),
-
-            Center(
-              child: Text(
-                status,
-                style: const TextStyle(
-                  color: Colors.cyanAccent,
-                  fontSize: 14,
-                  letterSpacing: 3,
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 30),
-
-            // API KEY
-
-            TextField(
-              controller: apiController,
-              obscureText: true,
-
-              decoration: const InputDecoration(
-                labelText: "Gemini API Key",
-                hintText: "Paste your API key",
-                border: OutlineInputBorder(),
-              ),
-            ),
-
-            const SizedBox(height: 20),
-
-            // USER MESSAGE
-
-            TextField(
-              controller: messageController,
-
-              minLines: 2,
-              maxLines: 5,
-
-              decoration: const InputDecoration(
-                labelText: "Ask JARVIS",
-                hintText: "Type something...",
-                border: OutlineInputBorder(),
-              ),
-            ),
-
-            const SizedBox(height: 15),
-
-            // ASK BUTTON
-
-            SizedBox(
-              height: 55,
-
-              child: ElevatedButton.icon(
-                onPressed: () {
-                  askJarvis(messageController.text);
-                },
-
-                icon: const Icon(Icons.send),
-
-                label: const Text(
-                  "ASK JARVIS",
-                  style: TextStyle(
-                    fontSize: 16,
-                    letterSpacing: 2,
-                  ),
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 12),
-
-            // MICROPHONE
-
-            SizedBox(
-              height: 65,
-
-              child: ElevatedButton.icon(
-                onPressed: startListening,
-
-                icon: Icon(
-                  listening
-                      ? Icons.stop
-                      : Icons.mic,
-                ),
-
-                label: Text(
-                  listening
-                      ? "STOP LISTENING"
-                      : "SPEAK TO JARVIS",
-
-                  style: const TextStyle(
-                    fontSize: 16,
-                    letterSpacing: 2,
-                  ),
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 30),
-
-            // USER
-
-            if (userMessage.isNotEmpty) ...[
-              const Text(
-                "YOU",
-                style: TextStyle(
-                  color: Colors.white54,
-                  letterSpacing: 2,
-                ),
-              ),
-
-              const SizedBox(height: 8),
-
-              Text(
-                userMessage,
-                style: const TextStyle(
-                  fontSize: 17,
-                ),
-              ),
-
-              const SizedBox(height: 25),
-            ],
-
-            // JARVIS
-
-            const Text(
-              "JARVIS",
-              style: TextStyle(
-                color: Colors.cyanAccent,
-                letterSpacing: 3,
+            Text(
+              status,
+              style: const TextStyle(
+                fontSize: 20,
                 fontWeight: FontWeight.bold,
               ),
-            ),
-
-            const SizedBox(height: 10),
-
-            Container(
-              padding: const EdgeInsets.all(18),
-
-              decoration: BoxDecoration(
-                color: const Color(0xFF08121C),
-
-                borderRadius:
-                    BorderRadius.circular(12),
-
-                border: Border.all(
-                  color: Colors.cyanAccent,
-                ),
-              ),
-
-              child: Text(
-                jarvisReply,
-                style: const TextStyle(
-                  fontSize: 17,
-                  height: 1.5,
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 30),
-
-            const Text(
-              "JARVIS V1 • PERSONAL AI ASSISTANT",
               textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Colors.white38,
-                fontSize: 11,
-                letterSpacing: 2,
+            ),
+            const SizedBox(height: 30),
+            if (userMessage.isNotEmpty)
+              Text(
+                'You: $userMessage',
+                textAlign: TextAlign.center,
+              ),
+            const SizedBox(height: 20),
+            if (response.isNotEmpty)
+              Text(
+                'Jarvis: $response',
+                textAlign: TextAlign.center,
+              ),
+            const SizedBox(height: 40),
+            FloatingActionButton.large(
+              onPressed: startListening,
+              child: Icon(
+                listening ? Icons.stop : Icons.mic,
               ),
             ),
           ],
         ),
       ),
     );
-  }
-
-  @override
-  void dispose() {
-    messageController.dispose();
-    apiController.dispose();
-
-    speech.stop();
-    tts.stop();
-
-    super.dispose();
   }
 }
